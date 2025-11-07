@@ -1,0 +1,82 @@
+{
+  "project_info": {
+    "project_number": "330657617117",
+    "project_id": "journal-e28a7",
+    "storage_bucket": "journal-e28a7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:330657617117:android:457e9966651551111ff734",
+        "android_client_info": {
+          "package_name": "com.company.journal_curs"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "330657617117-mamfqnln9soq8e10trp5ivde0i0bkkgp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAere7hqYBWavri8i_jZmHh10ewejjAeH8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "330657617117-mamfqnln9soq8e10trp5ivde0i0bkkgp.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "330657617117-fdclcdtrvjbfcq42fi4uu88untafhjqc.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.journalCurs"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:330657617117:android:737f31cdbab649481ff734",
+        "android_client_info": {
+          "package_name": "com.example.journal_curs"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "330657617117-mamfqnln9soq8e10trp5ivde0i0bkkgp.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAere7hqYBWavri8i_jZmHh10ewejjAeH8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "330657617117-mamfqnln9soq8e10trp5ivde0i0bkkgp.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "330657617117-fdclcdtrvjbfcq42fi4uu88untafhjqc.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.journalCurs"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
