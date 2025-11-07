@@ -1,7 +1,9 @@
 // Улучшенный сервис для работы с журналом
 import 'package:hive/hive.dart';
 import '../models/journal_models.dart';
+import '../models/template_models.dart';
 import 'calculations_service.dart';
+import 'template_service.dart';
 
 class JournalService {
   late Box<Group> groupBox;
@@ -134,6 +136,180 @@ class JournalService {
 
   // ================= Calculations =====================
   Future<void> calculateRatings(Group group) async {
+    final templateService = TemplateService();
+    
+    // Получаем шаблон для группы
+    Template? template;
+    if (group.templateId != null) {
+      template = templateService.getTemplateById(group.templateId!);
+    }
+    template ??= templateService.getDefaultTemplate();
+    
+    if (template == null) {
+      // Если шаблона нет, используем старую логику (для обратной совместимости)
+      await _calculateRatingsLegacy(group);
+      return;
+    }
+
+    final students = getStudentsByGroup(group);
+    final dates = getDatesByGroup(group);
+
+    for (final student in students) {
+      final gradesList = getGradesByStudent(student);
+      final gradesMap = <String, String>{};
+      for (final g in gradesList) {
+        gradesMap[g.dateId] = g.grade;
+      }
+
+      final gradesArray = dates.map((d) => gradesMap[d.key.toString()] ?? '').toList();
+
+      // Подготовка данных для формул
+      Map<String, dynamic>? labData;
+      if (group.includeLabs && !group.isLabGroup) {
+        final labGroupName = '${group.name}_Лаб';
+        try {
+          final labGroup = getGroupByName(labGroupName);
+          if (labGroup != null) {
+            final labStudents = getStudentsByGroup(labGroup);
+            final labStudent = labStudents.firstWhere(
+              (ls) => ls.name.toLowerCase() == student.name.toLowerCase(),
+              orElse: () => throw Exception(),
+            );
+            final labDates = getDatesByGroup(labGroup);
+            final labGradesList = getGradesByStudent(labStudent);
+            final labGradesMap = <String, String>{};
+            for (final g in labGradesList) {
+              labGradesMap[g.dateId] = g.grade;
+            }
+            final labGradesArray = labDates.map((d) => labGradesMap[d.key.toString()] ?? '').toList();
+
+            double labNumericSum = 0.0;
+            int labCount = labDates.length;
+            final labOVal = labStudent.otrabotka;
+
+            for (final g in labGradesArray) {
+              try {
+                final v = double.parse(g);
+                labNumericSum += v;
+              } catch (e) {}
+            }
+
+            labData = {
+              'lab_count': labCount,
+              'lab_numeric_sum': labNumericSum,
+            };
+          }
+        } catch (e) {}
+      }
+
+      // Подготавливаем переменные для формул
+      final gradesNumeric = <double>[];
+      int countN = 0;
+      for (final g in gradesArray) {
+        final gTrimmed = g.trim();
+        if (gTrimmed.isEmpty) continue;
+        if (gTrimmed.toUpperCase() == 'Н') {
+          countN++;
+        } else {
+          try {
+            gradesNumeric.add(double.parse(gTrimmed));
+          } catch (e) {
+            countN++;
+          }
+        }
+      }
+      
+      final gradesSum = gradesNumeric.fold<double>(0.0, (a, b) => a + b);
+      final gradesAvg = gradesNumeric.isNotEmpty ? gradesSum / gradesNumeric.length : 0.0;
+      final gradesCount = gradesArray.length;
+      final datesCount = dates.length;
+      
+      final labSum = labData?['lab_numeric_sum'] ?? 0.0;
+      final labCount = labData?['lab_count'] ?? 0;
+
+      // Вычисляем значения для каждого столбца шаблона
+      final context = <String, dynamic>{
+        // Базовые переменные
+        'student': student,
+        'student_name': student.name,
+        'group': group,
+        'dates': dates,
+        'dates_count': datesCount,
+        'grades': gradesArray,
+        'grades_count': gradesCount,
+        'grades_sum': gradesSum,
+        'grades_avg': gradesAvg,
+        'count_n': countN,
+        'otrabotka': student.otrabotka,
+        'exam': student.exam,
+        'include_exam': group.includeExam,
+        'includeExam': group.includeExam, // для обратной совместимости
+        'lab_data': labData,
+        'lab_sum': labSum,
+        'lab_count': labCount,
+        // Вычисляемые значения (будут добавлены по мере вычисления)
+      };
+
+      // Вычисляем столбцы в порядке зависимостей
+      final calculatedValues = <String, dynamic>{};
+      
+      // Сначала вычисляем базовые значения
+      for (final column in template.columns) {
+        if (column.type == 'calculated' && column.formula != null) {
+          final value = templateService.calculateColumnValue(
+            column: column,
+            context: {...context, ...calculatedValues},
+          );
+          calculatedValues[column.field] = value;
+        }
+      }
+
+      // Сохраняем вычисленные значения в студента
+      // Используем рефлексию или явное сопоставление полей
+      for (final column in template.columns) {
+        final value = calculatedValues[column.field] ?? 
+                     (column.type == 'number' ? (student as dynamic)[column.field] : null);
+        
+        if (value != null) {
+          // Сохраняем в соответствующее поле студента
+          switch (column.field) {
+            case 'letter_count':
+              student.letterCount = value is int ? value : (value as num).toInt();
+              break;
+            case 'ro_value':
+              student.roValue = value is double ? value : (value as num).toDouble();
+              break;
+            case 'r_value':
+              student.rValue = value is double ? value : (value as num).toDouble();
+              break;
+            case 'itog_value':
+              student.itogValue = value is double ? value : (value as num).toDouble();
+              break;
+            case 'letter_eq':
+              student.letterEq = value.toString();
+              break;
+            case 'digital_eq':
+              student.digitalEq = value is double ? value : (value as num).toDouble();
+              break;
+            case 'otrabotka':
+              student.otrabotka = value is double ? value : (value as num).toDouble();
+              break;
+            case 'exam':
+              student.exam = value is double ? value : (value as num).toDouble();
+              break;
+          }
+        }
+      }
+
+      // Сбрасываем отработку если Н = 0
+      student.otrabotka = resetOtrabotkaIfNeeded(student.letterCount, student.otrabotka);
+
+      await updateStudent(student);
+    }
+  }
+
+  // Старая логика расчетов (для обратной совместимости)
+  Future<void> _calculateRatingsLegacy(Group group) async {
     final isLabGroup = group.isLabGroup;
     final students = getStudentsByGroup(group);
     final dates = getDatesByGroup(group);
@@ -148,17 +324,14 @@ class JournalService {
       final gradesArray = dates.map((d) => gradesMap[d.key.toString()] ?? '').toList();
 
       if (isLabGroup) {
-        // Используем calcLabPraktValues для типа "lab", calcLabValues для обычных лаб-групп
         Map<String, dynamic> result;
         if (group.groupType == 'lab') {
-          // Lab/Pract вариант: RO = ΣL_num / LC, R = (ΣL_num + O)/(LC + 1_(O>0))
           result = calcLabPraktValues(
             gradesList: gradesArray,
             manualO: student.otrabotka,
             labDatesCount: dates.length,
           );
         } else {
-          // Обычный Lab вариант: RO = ΣL_num / LC, R = (ΣL_num + O * N)/LC
           result = calcLabValues(
             gradesList: gradesArray,
             manualO: student.otrabotka,
@@ -172,9 +345,7 @@ class JournalService {
         student.letterEq = eq['letter'] as String;
         student.digitalEq = eq['digital'] as double;
       } else {
-        // Теоретическая группа
         if (!group.includeTheory) {
-          // Если теория выключена - все значения 0
           student.letterCount = 0;
           student.roValue = 0;
           student.rValue = 0;
@@ -201,12 +372,10 @@ class JournalService {
                 }
                 final labGradesArray = labDates.map((d) => labGradesMap[d.key.toString()] ?? '').toList();
 
-                // Согласно main.py: lab_replaced_sum = сумма, где "не число" заменено на otrabotka из лаб-студента
-                // Важно: используем otrabotka из лаб-студента, а не из теории
                 double labNumericSum = 0.0;
                 double labReplacedSum = 0.0;
                 int labCount = labDates.length;
-                final labOVal = labStudent.otrabotka; // Берем отработку из лаб-студента
+                final labOVal = labStudent.otrabotka;
 
                 for (final g in labGradesArray) {
                   try {
@@ -214,7 +383,6 @@ class JournalService {
                     labNumericSum += v;
                     labReplacedSum += v;
                   } catch (e) {
-                    // Если не число, заменяем на otrabotka лаб-студента (как в main.py строка 2309)
                     labReplacedSum += labOVal;
                   }
                 }
@@ -225,9 +393,7 @@ class JournalService {
                   'lab_replaced_sum': labReplacedSum,
                 };
               }
-            } catch (e) {
-              // Лаб группа не найдена
-            }
+            } catch (e) {}
           }
 
           final result = calcTheoryLabValues(
@@ -245,7 +411,6 @@ class JournalService {
           student.letterEq = result['letter'] as String;
           student.digitalEq = result['digital'] as double;
 
-          // Сбрасываем отработку если Н = 0
           student.otrabotka = resetOtrabotkaIfNeeded(student.letterCount, student.otrabotka);
         }
       }

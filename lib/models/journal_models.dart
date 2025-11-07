@@ -23,6 +23,9 @@ class Group extends HiveObject {
   @HiveField(5)
   String groupType; // 'classic' или 'lab'
 
+  @HiveField(6)
+  String? templateId; // ID используемого шаблона
+
   Group({
     required this.name,
     this.includeExam = true,
@@ -30,6 +33,7 @@ class Group extends HiveObject {
     this.includeTheory = true,
     String? groupId,
     String? groupType,
+    this.templateId,
   }) : groupId = groupId ?? DateTime.now().millisecondsSinceEpoch.toString(),
        groupType = groupType ?? (name.endsWith('_Лаб') ? 'lab' : 'classic');
 

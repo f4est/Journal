@@ -6,10 +6,12 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'models/journal_models.dart';
+import 'models/template_models.dart';
 import 'screens/journal_screen.dart';
 import 'screens/auth_screen.dart';
 import 'screens/settings_screen.dart';
 import 'services/journal_service.dart';
+import 'services/template_service.dart';
 import 'services/app_settings.dart';
 import 'firebase_options.dart';
 
@@ -36,9 +38,15 @@ Future<void> main() async {
   Hive.registerAdapter(StudentAdapter());
   Hive.registerAdapter(LessonDateAdapter());
   Hive.registerAdapter(GradeAdapter());
+  Hive.registerAdapter(TemplateAdapter());
+  Hive.registerAdapter(ColumnDefinitionAdapter());
 
   // Инициализация русской локали для календаря
   await initializeDateFormatting('ru_RU', null);
+
+  // Инициализация сервисов
+  final templateService = TemplateService();
+  await templateService.init();
 
   runApp(const MyApp());
 }

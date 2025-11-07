@@ -23,13 +23,14 @@ class GroupAdapter extends TypeAdapter<Group> {
       includeTheory: fields[3] as bool,
       groupId: fields[4] as String?,
       groupType: fields[5] as String?,
+      templateId: fields[6] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Group obj) {
     writer
-      ..writeByte(6)
+      ..writeByte(7)
       ..writeByte(0)
       ..write(obj.name)
       ..writeByte(1)
@@ -41,7 +42,9 @@ class GroupAdapter extends TypeAdapter<Group> {
       ..writeByte(4)
       ..write(obj.groupId)
       ..writeByte(5)
-      ..write(obj.groupType);
+      ..write(obj.groupType)
+      ..writeByte(6)
+      ..write(obj.templateId);
   }
 
   @override

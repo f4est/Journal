@@ -242,21 +242,41 @@ class ExportService {
       String? outputFile = await FilePicker.platform.saveFile(
         dialogTitle: 'Выберите место для сохранения файла',
         fileName: fileName,
-        type: extension == 'xlsx' ? FileType.custom : FileType.custom,
-        allowedExtensions: extension == 'xlsx' ? ['xlsx'] : ['csv'],
+        type: FileType.custom,
+        allowedExtensions: extension == 'xlsx' 
+            ? ['xlsx'] 
+            : extension == 'csv' 
+                ? ['csv'] 
+                : extension == 'json'
+                    ? ['json']
+                    : [extension],
       );
       
       if (outputFile != null) {
-        // Копируем файл в выбранное место
-        final sourceFile = File(filePath);
-        final targetFile = File(outputFile);
-        await sourceFile.copy(targetFile.path);
-        return targetFile.path;
+        if (filePath.isNotEmpty) {
+          // Копируем файл в выбранное место
+          final sourceFile = File(filePath);
+          final targetFile = File(outputFile);
+          await sourceFile.copy(targetFile.path);
+          return targetFile.path;
+        } else {
+          // Создаем новый файл
+          final targetFile = File(outputFile);
+          await targetFile.writeAsString('');
+          return targetFile.path;
+        }
       }
       return null;
     } catch (e) {
       // Если диалог не поддерживается (например, на вебе), используем исходный путь
-      return filePath;
+      if (filePath.isNotEmpty) {
+        return filePath;
+      }
+      // Создаем временный файл
+      final directory = await getApplicationDocumentsDirectory();
+      final tempFile = File('${directory.path}/$fileName');
+      await tempFile.writeAsString('');
+      return tempFile.path;
     }
   }
 }

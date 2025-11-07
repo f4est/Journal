@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:pluto_grid/pluto_grid.dart';
 import '../models/journal_models.dart';
+import '../models/template_models.dart';
 import '../services/journal_service.dart';
+import '../services/template_service.dart';
 import '../utils/pluto_localization.dart';
 import '../utils/grade_colors.dart';
 import 'journal_date_picker.dart';
@@ -17,6 +19,7 @@ class JournalScreen extends StatefulWidget {
 
 class _JournalScreenState extends State<JournalScreen> {
   final JournalService _service = JournalService();
+  final TemplateService _templateService = TemplateService();
   
   bool _isInitialized = false;
   Group? _currentGroup;
@@ -195,10 +198,21 @@ class _JournalScreenState extends State<JournalScreen> {
   }
 
   void _buildColumns() {
+    if (_currentGroup == null) return;
+    
     // Определяем тему для использования в рендерере
     final isDark = Theme.of(context).brightness == Brightness.dark;
     
+    // Получаем шаблон для группы
+    Template? template;
+    if (_currentGroup!.templateId != null) {
+      template = _templateService.getTemplateById(_currentGroup!.templateId!);
+    }
+    template ??= _templateService.getDefaultTemplate();
+    
     _columns.clear();
+    
+    // Столбец студента
     _columns.add(
       PlutoColumn(
         title: 'Студент',
@@ -231,10 +245,10 @@ class _JournalScreenState extends State<JournalScreen> {
                 style: TextStyle(
                   fontSize: 12,
                   color: gradeColor != null && !isDark 
-                      ? Colors.black87 // Темный текст для светлых цветов
+                      ? Colors.black87
                       : null,
                   fontWeight: gradeColor != null && !isDark 
-                      ? FontWeight.w600 // Жирнее для читаемости
+                      ? FontWeight.w600
                       : FontWeight.normal,
                 ),
               ),
@@ -244,7 +258,48 @@ class _JournalScreenState extends State<JournalScreen> {
       );
     }
 
-    // Добавляем спецстолбцы (закреплены в конце, не редактируемые, кроме Отработка)
+    // Добавляем столбцы из шаблона
+    if (template != null) {
+      // Сортируем столбцы по порядку
+      final sortedColumns = List<ColumnDefinition>.from(template.columns)
+        ..sort((a, b) => a.order.compareTo(b.order));
+      
+      for (final colDef in sortedColumns) {
+        // Пропускаем столбец exam если экзамен не включен
+        if (colDef.field == 'exam' && !_includeExam) {
+          continue;
+        }
+        
+        PlutoColumnType columnType;
+        if (colDef.type == 'number') {
+          columnType = PlutoColumnType.number();
+        } else {
+          columnType = PlutoColumnType.text();
+        }
+        
+        _columns.add(
+          PlutoColumn(
+            title: colDef.title,
+            field: colDef.field,
+            type: columnType,
+            width: colDef.width,
+            readOnly: colDef.readOnly,
+            frozen: colDef.frozen 
+                ? (colDef.order < 5 ? PlutoColumnFrozen.start : PlutoColumnFrozen.end)
+                : PlutoColumnFrozen.none,
+          ),
+        );
+      }
+    } else {
+      // Fallback на старые столбцы если шаблона нет
+      _buildColumnsLegacy();
+    }
+  }
+  
+  // Старый метод построения столбцов (для обратной совместимости)
+  void _buildColumnsLegacy() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
     _columns.addAll([
       PlutoColumn(
         title: 'Н',
@@ -267,7 +322,7 @@ class _JournalScreenState extends State<JournalScreen> {
         field: 'otrabotka',
         type: PlutoColumnType.number(),
         width: 90,
-        readOnly: false, // Можно редактировать
+        readOnly: false,
         frozen: PlutoColumnFrozen.end,
       ),
       PlutoColumn(
@@ -287,7 +342,7 @@ class _JournalScreenState extends State<JournalScreen> {
           field: 'exam',
           type: PlutoColumnType.number(),
           width: 70,
-          readOnly: false, // Редактируемый только когда включен экзамен
+          readOnly: false,
           frozen: PlutoColumnFrozen.end,
         ),
       );
@@ -362,21 +417,72 @@ class _JournalScreenState extends State<JournalScreen> {
         cells['date_$i'] = PlutoCell(value: gradeValue);
       }
 
-      // Спецстолбцы - используем свежие данные после пересчета
-      cells['letter_count'] = PlutoCell(value: freshStudent.letterCount);
-      // Форматируем с одной цифрой после запятой
-      cells['ro_value'] = PlutoCell(value: freshStudent.roValue.toStringAsFixed(1));
-      cells['otrabotka'] = PlutoCell(value: freshStudent.otrabotka);
-      cells['r_value'] = PlutoCell(value: freshStudent.rValue.toStringAsFixed(1));
-      
-      if (_includeExam) {
-        cells['exam'] = PlutoCell(value: freshStudent.exam);
+      // Заполняем столбцы из шаблона
+      Template? template;
+      if (_currentGroup!.templateId != null) {
+        template = _templateService.getTemplateById(_currentGroup!.templateId!);
       }
+      template ??= _templateService.getDefaultTemplate();
       
-      cells['itog_value'] = PlutoCell(value: freshStudent.itogValue.toStringAsFixed(1));
-      cells['letter_eq'] = PlutoCell(value: freshStudent.letterEq);
-      // Форматируем с двумя цифрами после запятой
-      cells['digital_eq'] = PlutoCell(value: freshStudent.digitalEq.toStringAsFixed(2));
+      if (template != null) {
+        for (final colDef in template.columns) {
+          // Пропускаем exam если не включен
+          if (colDef.field == 'exam' && !_includeExam) {
+            continue;
+          }
+          
+          dynamic value;
+          switch (colDef.field) {
+            case 'letter_count':
+              value = freshStudent.letterCount;
+              break;
+            case 'ro_value':
+              value = _formatValue(freshStudent.roValue, colDef.format);
+              break;
+            case 'otrabotka':
+              value = freshStudent.otrabotka;
+              break;
+            case 'r_value':
+              value = _formatValue(freshStudent.rValue, colDef.format);
+              break;
+            case 'exam':
+              value = freshStudent.exam;
+              break;
+            case 'itog_value':
+              value = _formatValue(freshStudent.itogValue, colDef.format);
+              break;
+            case 'letter_eq':
+              value = freshStudent.letterEq;
+              break;
+            case 'digital_eq':
+              value = _formatValue(freshStudent.digitalEq, colDef.format);
+              break;
+            default:
+              // Для других полей пытаемся получить из студента
+              try {
+                value = (freshStudent as dynamic)[colDef.field];
+              } catch (e) {
+                value = null;
+              }
+          }
+          
+          if (value != null) {
+            cells[colDef.field] = PlutoCell(value: value);
+          }
+        }
+      } else {
+        // Fallback на старые столбцы
+        cells['letter_count'] = PlutoCell(value: freshStudent.letterCount);
+        cells['ro_value'] = PlutoCell(value: freshStudent.roValue.toStringAsFixed(1));
+        cells['otrabotka'] = PlutoCell(value: freshStudent.otrabotka);
+        cells['r_value'] = PlutoCell(value: freshStudent.rValue.toStringAsFixed(1));
+        if (_includeExam) {
+          cells['exam'] = PlutoCell(value: freshStudent.exam);
+        }
+        cells['itog_value'] = PlutoCell(value: freshStudent.itogValue.toStringAsFixed(1));
+        cells['letter_eq'] = PlutoCell(value: freshStudent.letterEq);
+        cells['digital_eq'] = PlutoCell(value: freshStudent.digitalEq.toStringAsFixed(2));
+      }
 
       return PlutoRow(cells: cells);
     }).toList();
@@ -389,6 +495,13 @@ class _JournalScreenState extends State<JournalScreen> {
     final labDates = _service.getDatesByGroup(_labGroup!);
     labDates.sort((a, b) => a.date.compareTo(b.date));
     
+    // Получаем шаблон для лаб-группы
+    Template? template;
+    if (_labGroup!.templateId != null) {
+      template = _templateService.getTemplateById(_labGroup!.templateId!);
+    }
+    template ??= _templateService.getDefaultTemplate();
+    
     _labColumns.clear();
     _labColumns.add(
       PlutoColumn(
@@ -400,7 +513,7 @@ class _JournalScreenState extends State<JournalScreen> {
       ),
     );
 
-    // Добавляем столбцы дат с кастомным рендерером для цветовой раскраски
+    // Добавляем столбцы дат
     for (var i = 0; i < labDates.length; i++) {
       final date = labDates[i];
       _labColumns.add(
@@ -422,10 +535,10 @@ class _JournalScreenState extends State<JournalScreen> {
                 style: TextStyle(
                   fontSize: 12,
                   color: gradeColor != null && !isDark 
-                      ? Colors.black87 // Темный текст для светлых цветов
+                      ? Colors.black87
                       : null,
                   fontWeight: gradeColor != null && !isDark 
-                      ? FontWeight.w600 // Жирнее для читаемости
+                      ? FontWeight.w600
                       : FontWeight.normal,
                 ),
               ),
@@ -435,7 +548,39 @@ class _JournalScreenState extends State<JournalScreen> {
       );
     }
 
-    // Спецстолбцы для лаб-таблицы
+    // Добавляем столбцы из шаблона
+    if (template != null) {
+      final sortedColumns = List<ColumnDefinition>.from(template.columns)
+        ..sort((a, b) => a.order.compareTo(b.order));
+      
+      for (final colDef in sortedColumns) {
+        PlutoColumnType columnType;
+        if (colDef.type == 'number') {
+          columnType = PlutoColumnType.number();
+        } else {
+          columnType = PlutoColumnType.text();
+        }
+        
+        _labColumns.add(
+          PlutoColumn(
+            title: colDef.title,
+            field: colDef.field,
+            type: columnType,
+            width: colDef.width,
+            readOnly: colDef.readOnly,
+            frozen: colDef.frozen 
+                ? (colDef.order < 5 ? PlutoColumnFrozen.start : PlutoColumnFrozen.end)
+                : PlutoColumnFrozen.none,
+          ),
+        );
+      }
+    } else {
+      // Fallback на старые столбцы
+      _buildLabColumnsLegacy(labDates, isDark);
+    }
+  }
+  
+  void _buildLabColumnsLegacy(List<LessonDate> labDates, bool isDark) {
     _labColumns.addAll([
       PlutoColumn(
         title: 'Н',
@@ -529,16 +674,60 @@ class _JournalScreenState extends State<JournalScreen> {
         cells['date_$i'] = PlutoCell(value: gradeValue);
       }
 
-      // Спецстолбцы
-      cells['letter_count'] = PlutoCell(value: student.letterCount);
-      // Форматируем с одной цифрой после запятой
-      cells['ro_value'] = PlutoCell(value: student.roValue.toStringAsFixed(1));
-      cells['otrabotka'] = PlutoCell(value: student.otrabotka);
-      cells['r_value'] = PlutoCell(value: student.rValue.toStringAsFixed(1));
-      cells['itog_value'] = PlutoCell(value: student.itogValue.toStringAsFixed(1));
-      cells['letter_eq'] = PlutoCell(value: student.letterEq);
-      // Форматируем с двумя цифрами после запятой
-      cells['digital_eq'] = PlutoCell(value: student.digitalEq.toStringAsFixed(2));
+      // Заполняем столбцы из шаблона
+      Template? template;
+      if (_labGroup!.templateId != null) {
+        template = _templateService.getTemplateById(_labGroup!.templateId!);
+      }
+      template ??= _templateService.getDefaultTemplate();
+      
+      if (template != null) {
+        for (final colDef in template.columns) {
+          dynamic value;
+          switch (colDef.field) {
+            case 'letter_count':
+              value = student.letterCount;
+              break;
+            case 'ro_value':
+              value = _formatValue(student.roValue, colDef.format);
+              break;
+            case 'otrabotka':
+              value = student.otrabotka;
+              break;
+            case 'r_value':
+              value = _formatValue(student.rValue, colDef.format);
+              break;
+            case 'itog_value':
+              value = _formatValue(student.itogValue, colDef.format);
+              break;
+            case 'letter_eq':
+              value = student.letterEq;
+              break;
+            case 'digital_eq':
+              value = _formatValue(student.digitalEq, colDef.format);
+              break;
+            default:
+              try {
+                value = (student as dynamic)[colDef.field];
+              } catch (e) {
+                value = null;
+              }
+          }
+          
+          if (value != null) {
+            cells[colDef.field] = PlutoCell(value: value);
+          }
+        }
+      } else {
+        // Fallback
+        cells['letter_count'] = PlutoCell(value: student.letterCount);
+        cells['ro_value'] = PlutoCell(value: student.roValue.toStringAsFixed(1));
+        cells['otrabotka'] = PlutoCell(value: student.otrabotka);
+        cells['r_value'] = PlutoCell(value: student.rValue.toStringAsFixed(1));
+        cells['itog_value'] = PlutoCell(value: student.itogValue.toStringAsFixed(1));
+        cells['letter_eq'] = PlutoCell(value: student.letterEq);
+        cells['digital_eq'] = PlutoCell(value: student.digitalEq.toStringAsFixed(2));
+      }
 
       return PlutoRow(cells: cells);
     }).toList();
@@ -1425,6 +1614,24 @@ class _JournalScreenState extends State<JournalScreen> {
     _refreshTable();
   }
   
+  // Форматирование значения по формату
+  String _formatValue(dynamic value, String? format) {
+    if (value == null) return '';
+    if (format == null) return value.toString();
+    
+    if (value is num) {
+      if (format == '0.1') {
+        return value.toStringAsFixed(1);
+      } else if (format == '0.2') {
+        return value.toStringAsFixed(2);
+      } else if (format == '0') {
+        return value.toInt().toString();
+      }
+    }
+    
+    return value.toString();
+  }
+
   // Инвалидация кэша при изменении данных
   void _invalidateCacheForGroup(String? groupId) {
     if (groupId != null) {

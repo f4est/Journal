@@ -6,9 +6,14 @@ import '../services/firebase_sync_service.dart';
 import '../services/journal_service.dart';
 import '../services/export_service.dart';
 import '../services/import_service.dart';
+import '../services/template_service.dart';
 import '../models/journal_models.dart';
+import '../models/template_models.dart';
 import '../services/app_settings.dart';
 import 'help_screen.dart';
+import 'template_editor_dialog.dart';
+import 'dart:convert';
+import 'dart:io';
 
 class SettingsScreen extends StatefulWidget {
   final JournalService journalService;
@@ -21,6 +26,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _authService = AuthService();
+  final _templateService = TemplateService();
   late final FirebaseSyncService _syncService;
   late final ExportService _exportService;
   late final ImportService _importService;
@@ -464,6 +470,220 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // Управление шаблонами
+  void _showCreateTemplateDialog() {
+    _showEditTemplateDialog(null);
+  }
+
+  void _showEditTemplateDialog(Template? template) {
+    final nameController = TextEditingController(text: template?.name ?? '');
+    final descController = TextEditingController(text: template?.description ?? '');
+    final columns = template != null 
+        ? List<ColumnDefinition>.from(template.columns)
+        : <ColumnDefinition>[];
+
+    showDialog(
+      context: context,
+      builder: (context) => TemplateEditorDialog(
+        template: template,
+        nameController: nameController,
+        descController: descController,
+        columns: columns,
+        onSave: (name, desc, cols) async {
+          if (template != null) {
+            template.name = name;
+            template.description = desc;
+            template.columns = cols;
+            await _templateService.saveTemplate(template);
+          } else {
+            final newTemplate = Template(
+              name: name,
+              description: desc,
+              columns: cols,
+            );
+            await _templateService.addTemplate(newTemplate);
+          }
+          if (mounted) {
+            setState(() {});
+            Navigator.pop(context);
+          }
+        },
+      ),
+    );
+  }
+
+  void _duplicateTemplate(Template template) async {
+    final newTemplate = Template(
+      name: '${template.name} (копия)',
+      description: template.description,
+      columns: template.columns.map((col) => ColumnDefinition(
+        field: col.field,
+        title: col.title,
+        type: col.type,
+        formula: col.formula,
+        readOnly: col.readOnly,
+        frozen: col.frozen,
+        width: col.width,
+        format: col.format,
+        order: col.order,
+      )).toList(),
+    );
+    await _templateService.addTemplate(newTemplate);
+    if (mounted) {
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Шаблон скопирован')),
+      );
+    }
+  }
+
+  void _setDefaultTemplate(Template template) async {
+    try {
+      await _templateService.setDefaultTemplate(template);
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Шаблон установлен по умолчанию')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка: $e')),
+        );
+      }
+    }
+  }
+
+  void _deleteTemplate(Template template) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Удаление шаблона'),
+        content: Text('Удалить шаблон "${template.name}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await _templateService.deleteTemplate(template);
+        if (mounted) {
+          setState(() {});
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Шаблон удалён')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Ошибка: $e')),
+          );
+        }
+      }
+    }
+  }
+
+  void _exportTemplate(Template template) async {
+    try {
+      final json = jsonEncode({
+        'templateId': template.templateId,
+        'name': template.name,
+        'description': template.description,
+        'columns': template.columns.map((col) => {
+          'field': col.field,
+          'title': col.title,
+          'type': col.type,
+          'formula': col.formula,
+          'readOnly': col.readOnly,
+          'frozen': col.frozen,
+          'width': col.width,
+          'format': col.format,
+          'order': col.order,
+        }).toList(),
+      });
+
+      final fileName = 'Шаблон_${template.name}_${DateTime.now().millisecondsSinceEpoch}.json';
+      final savedPath = await _exportService.saveFile(
+        '',
+        fileName,
+        'json',
+      );
+
+      if (savedPath != null) {
+        final file = File(savedPath);
+        await file.writeAsString(json);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Шаблон экспортирован: $savedPath')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка экспорта: $e')),
+        );
+      }
+    }
+  }
+
+  void _importTemplate() async {
+    final filePath = await _importService.pickFile(
+      allowedExtensions: ['json'],
+    );
+
+    if (filePath == null) return;
+
+    try {
+      final file = File(filePath);
+      final jsonString = await file.readAsString();
+      final data = jsonDecode(jsonString) as Map<String, dynamic>;
+
+      final columns = (data['columns'] as List).map((col) => ColumnDefinition(
+        field: col['field'] as String,
+        title: col['title'] as String,
+        type: col['type'] as String,
+        formula: col['formula'] as String?,
+        readOnly: col['readOnly'] as bool,
+        frozen: col['frozen'] as bool,
+        width: (col['width'] as num).toDouble(),
+        format: col['format'] as String?,
+        order: col['order'] as int,
+      )).toList();
+
+      final template = Template(
+        name: data['name'] as String,
+        description: data['description'] as String? ?? '',
+        columns: columns,
+      );
+
+      await _templateService.addTemplate(template);
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Шаблон импортирован')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка импорта: $e')),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
     _displayNameController.dispose();
@@ -670,6 +890,145 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       padding: EdgeInsets.only(top: 16),
                       child: Center(child: CircularProgressIndicator()),
                     ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          // Шаблоны
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Шаблоны столбцов',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.add),
+                        onPressed: _showCreateTemplateDialog,
+                        tooltip: 'Создать шаблон',
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  FutureBuilder<List<Template>>(
+                    future: Future.value(_templateService.getAllTemplates()),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      final templates = snapshot.data!;
+                      if (templates.isEmpty) {
+                        return const Text('Нет шаблонов');
+                      }
+                      return Column(
+                        children: templates.map((template) {
+                          return ListTile(
+                            title: Text(template.name),
+                            subtitle: template.description.isNotEmpty 
+                                ? Text(template.description)
+                                : null,
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (template.isDefault)
+                                  const Chip(
+                                    label: Text('По умолчанию'),
+                                    backgroundColor: Colors.blue,
+                                    labelStyle: TextStyle(color: Colors.white, fontSize: 10),
+                                  ),
+                                PopupMenuButton<String>(
+                                  onSelected: (value) {
+                                    if (value == 'edit') {
+                                      _showEditTemplateDialog(template);
+                                    } else if (value == 'duplicate') {
+                                      _duplicateTemplate(template);
+                                    } else if (value == 'export') {
+                                      _exportTemplate(template);
+                                    } else if (value == 'set_default') {
+                                      _setDefaultTemplate(template);
+                                    } else if (value == 'delete') {
+                                      _deleteTemplate(template);
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    const PopupMenuItem(
+                                      value: 'edit',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.edit, size: 20),
+                                          SizedBox(width: 8),
+                                          Text('Редактировать'),
+                                        ],
+                                      ),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'duplicate',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.copy, size: 20),
+                                          SizedBox(width: 8),
+                                          Text('Дублировать'),
+                                        ],
+                                      ),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'export',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.download, size: 20),
+                                          SizedBox(width: 8),
+                                          Text('Экспорт'),
+                                        ],
+                                      ),
+                                    ),
+                                    if (!template.isDefault)
+                                      const PopupMenuItem(
+                                        value: 'set_default',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.star, size: 20),
+                                            SizedBox(width: 8),
+                                            Text('Установить по умолчанию'),
+                                          ],
+                                        ),
+                                      ),
+                                    if (!template.isDefault)
+                                      const PopupMenuItem(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.delete, color: Colors.red, size: 20),
+                                            SizedBox(width: 8),
+                                            Text('Удалить', style: TextStyle(color: Colors.red)),
+                                          ],
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            onTap: () => _showEditTemplateDialog(template),
+                          );
+                        }).toList(),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _importTemplate,
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('Импорт шаблона'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(double.infinity, 48),
+                    ),
+                  ),
                 ],
               ),
             ),
